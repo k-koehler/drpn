@@ -11,129 +11,161 @@ class ParsingException : Exception {
     }
 }
 
-enum accept_state_t {
-    ACCEPT_LVAL,
-    ACCEPT_RVAL,
-    ACCEPT_OP
+enum AcceptStateType {
+    acceptFirstOperand,
+    acceptOperand,
+    acceptAny,
 };
 
-enum tok_t {
-    TERM,
-    OPERATOR
+enum TokenType {
+    operand,
+    operator
 }
 
-enum op_t {
-    ADD,
-    SUBTRACT,
-    DIVIDE,
-    MULTIPLY
+enum OperatorType {
+    add,
+    subtract,
+    divide,
+    multiply
 }
 
 struct ParseState {
     real val = 0;
-    real lval;
-    real rval;
-    accept_state_t accept_state = accept_state_t.ACCEPT_LVAL;
+    real[] vals = [];
+    AcceptStateType acceptState = AcceptStateType.acceptFirstOperand;
 }
 
 struct Token {
-    tok_t type;
+    TokenType type;
     real value;
-    op_t operator;
+    OperatorType operator;
+    string yytext;
 }
 
-Token parse_raw_token(string raw_token) {
+Token parseRawToken(string rawToken) {
+    immutable auto yytext = rawToken;
     try {
-        real numeric_value = parse!real(raw_token,);
-        return Token(tok_t.TERM, numeric_value);
+        immutable real numericValue = parse!real(rawToken);
+        return Token(TokenType.operand, numericValue, OperatorType.add, yytext);
     } catch (Exception e) {
         //ok
     }
-    op_t op;
-    switch (raw_token) {
+    OperatorType op;
+    switch (yytext) {
     case "+":
-        op = op_t.ADD;
+        op = OperatorType.add;
         break;
     case "-":
-        op = op_t.SUBTRACT;
+        op = OperatorType.subtract;
         break;
     case "*":
-        op = op_t.MULTIPLY;
+        op = OperatorType.multiply;
         break;
     case "/":
-        op = op_t.DIVIDE;
+        op = OperatorType.divide;
         break;
     default:
-        throw new ParsingException("unexpected token");
+        throw new ParsingException("unknown token \"" ~ yytext ~ "\"");
     }
-    return Token(tok_t.OPERATOR, 0, op);
+    return Token(TokenType.operator, 0, op, yytext);
 }
 
-Token[] tokenize(string raw_user_input) {
-    string[] raw_tokens = raw_user_input.strip().split(" ");
+Token[] tokenize(immutable string rawUserInput) {
+    string[] rawTokens = rawUserInput.strip().split(" ");
     Token[] tokens = [];
-    foreach (raw_token; raw_tokens) {
-        tokens ~= parse_raw_token(raw_token);
+    foreach (rawToken; rawTokens) {
+        tokens ~= parseRawToken(rawToken);
     }
     return tokens;
 }
 
-bool can_accept(accept_state_t cur_state, tok_t cur_type) {
-    if (cur_type == tok_t.TERM) {
-        return cur_state == accept_state_t.ACCEPT_LVAL || cur_state == accept_state_t.ACCEPT_RVAL;
+bool canAcceptToken(const ParseState* state, immutable Token* token) {
+    final switch (state.acceptState) {
+    case AcceptStateType.acceptFirstOperand:
+        return token.type == TokenType.operand;
+    case AcceptStateType.acceptOperand:
+        return token.type == TokenType.operand;
+    case AcceptStateType.acceptAny:
+        return true;
     }
-    return cur_state == accept_state_t.ACCEPT_OP;
 }
 
-real evaluate_tokens(Token[] tokens) {
+void displayError(const ParseState* state, immutable Token* token) {
+    string expectedTokenType;
+    switch (state.acceptState) {
+    case AcceptStateType.acceptFirstOperand:
+        expectedTokenType = "operand";
+        break;
+    case AcceptStateType.acceptOperand:
+        expectedTokenType = "operand";
+        break;
+    default:
+        expectedTokenType = "any";
+        break;
+    }
+    immutable auto errorText = "error at \"%s\": expected %s".format(token.yytext,
+            expectedTokenType);
+    throw new ParsingException(errorText);
+}
+
+real evaluateTokens(immutable Token[] tokens) {
     auto s = ParseState();
     foreach (token; tokens) {
-        if (!can_accept(s.accept_state, token.type)) {
-            throw new ParsingException("unexpected token type");
+        if (!canAcceptToken(&s, &token)) {
+            displayError(&s, &token);
         }
-        if (token.type == tok_t.TERM) {
-            if (s.accept_state == accept_state_t.ACCEPT_LVAL) {
-                s.lval = token.value;
-                s.accept_state = accept_state_t.ACCEPT_RVAL;
-                continue;
-            }
-            s.rval = token.value;
-            s.accept_state = accept_state_t.ACCEPT_OP;
-        } else if (token.type == tok_t.OPERATOR) {
-            final switch (token.operator) {
-            case op_t.ADD:
-                s.val = s.lval + s.rval;
+        if (token.type == TokenType.operand) {
+            final switch (s.acceptState) {
+            case AcceptStateType.acceptFirstOperand:
+                s.val = token.value;
+                s.acceptState = AcceptStateType.acceptOperand;
                 break;
-            case op_t.SUBTRACT:
-                s.val = s.lval - s.rval;
+            case AcceptStateType.acceptOperand:
+                s.vals ~= token.value;
+                s.acceptState = AcceptStateType.acceptAny;
                 break;
-            case op_t.MULTIPLY:
-                s.val = s.lval * s.rval;
-                break;
-            case op_t.DIVIDE:
-                s.val = s.lval / s.rval;
+            case AcceptStateType.acceptAny:
+                s.vals ~= token.value;
                 break;
             }
-            s.lval = s.val;
-            s.accept_state = accept_state_t.ACCEPT_RVAL;
+            continue;
         }
-
+        immutable auto rval = s.vals.back;
+        s.vals.popBack();
+        final switch (token.operator) {
+        case OperatorType.add:
+            s.val += rval;
+            break;
+        case OperatorType.subtract:
+            s.val -= rval;
+            break;
+        case OperatorType.multiply:
+            s.val *= rval;
+            break;
+        case OperatorType.divide:
+            s.val /= rval;
+            break;
+        }
+        s.acceptState = AcceptStateType.acceptAny;
+    }
+    if (s.vals.length > 0) {
+        displayError(&s, &tokens.back);
     }
     return s.val;
 }
 
-real evaluate_expr(string raw_user_input) {
-    return evaluate_tokens(tokenize(raw_user_input));
+real evaluateExpr(immutable string rawUserInput) {
+    return evaluateTokens(cast(immutable Token[]) tokenize(rawUserInput));
 }
 
 void main() {
     while (true) {
         try {
             writef("Enter an expression> ");
-            string input = readln;
-            writeln(evaluate_expr(input));
+            immutable string input = readln;
+            writeln(evaluateExpr(input));
         } catch (ParsingException e) {
-            writefln(e.msg);
+            writeln(e.msg);
         }
     }
 }
