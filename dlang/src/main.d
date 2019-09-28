@@ -80,12 +80,11 @@ Token[] tokenize(string raw_user_input) {
 
 bool can_accept(accept_state_t cur_state, tok_t cur_type) {
     if (cur_type == tok_t.TERM) {
-        return cur_state == accept_state_t.ACCEPT_LVAL || accept_state_t.ACCEPT_RVAL;
+        return cur_state == accept_state_t.ACCEPT_LVAL || cur_state == accept_state_t.ACCEPT_RVAL;
     }
     return cur_state == accept_state_t.ACCEPT_OP;
 }
 
-//using fsa
 real evaluate_tokens(Token[] tokens) {
     auto s = ParseState();
     foreach (token; tokens) {
@@ -115,7 +114,8 @@ real evaluate_tokens(Token[] tokens) {
                 s.val = s.lval / s.rval;
                 break;
             }
-            s.accept_state = accept_state_t.ACCEPT_LVAL;
+            s.lval = s.val;
+            s.accept_state = accept_state_t.ACCEPT_RVAL;
         }
 
     }
